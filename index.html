@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SQL to C# Converter (Fixed Constraint Bug)</title>
+    <title>SQL to C# Converter (Persist Theme)</title>
     <style>
         /* --- CSS VARIABLES & THEMES --- */
         :root {
@@ -12,7 +12,7 @@
             --bg-main: #1e1e1e;
             --text-main: #d4d4d4;
             --text-header: #ffffff;
-            --accent-color: #f0ad4e; /* Orange */
+            --accent-color: #f0ad4e;
             --accent-hover: #d6902f;
             --border-color: #3e3e42;
             --input-bg: #3c3c3c;
@@ -44,10 +44,9 @@
             height: 100vh;
             display: flex;
             overflow: hidden;
-            transition: all 0.3s;
+            transition: background-color 0.3s, color 0.3s;
         }
 
-        /* --- SIDEBAR --- */
         .sidebar {
             width: 340px;
             background-color: var(--bg-sidebar);
@@ -67,6 +66,7 @@
             color: var(--text-main); padding: 5px 10px; cursor: pointer;
             border-radius: 4px; font-size: 12px;
         }
+        .theme-toggle:hover { opacity: 0.8; }
 
         .label-header {
             font-weight: 600; color: var(--section-header);
@@ -105,7 +105,6 @@
         }
         input[type="checkbox"], input[type="radio"] { accent-color: var(--accent-color); transform: scale(1.1); }
 
-        /* --- MAIN CONTENT --- */
         .main-content { flex: 1; padding: 20px; display: flex; gap: 20px; }
         .editor-box { flex: 1; display: flex; flex-direction: column; }
         .editor-label { margin-bottom: 10px; font-weight: bold; color: var(--accent-color); display: flex; justify-content: space-between; }
@@ -137,17 +136,18 @@
         <button class="btn-generate" onclick="generateClass()">Generate Class</button>
         
         <div class="control-group">
-            <label class="label-header">Validation</label>
+            <label class="label-header">Validation & Attributes</label>
             <div class="option-box">
-                <label class="check-item"><input type="checkbox" id="chkAnnotations" checked> [MaxLength]</label>
-                <label class="check-item"><input type="checkbox" id="chkComments" checked> Comments</label>
+                <label class="check-item"><input type="checkbox" id="chkIdentity" checked> Identity [DatabaseGenerated]</label>
+                <label class="check-item"><input type="checkbox" id="chkAnnotations" checked> Length [MaxLength]</label>
+                <label class="check-item"><input type="checkbox" id="chkComments"> Comments</label>
             </div>
         </div>
 
         <div class="control-group">
             <label class="label-header">Code Style</label>
             <div class="option-box">
-                <label class="check-item"><input type="checkbox" id="chkPascal" checked> PascalCase</label>
+                <label class="check-item"><input type="checkbox" id="chkPascal"> PascalCase</label>
                 <label class="check-item"><input type="checkbox" id="chkNullable" checked> Nullable (int?)</label>
                 <label class="check-item"><input type="checkbox" id="chkConstructor"> Constructor</label>
             </div>
@@ -167,20 +167,12 @@
         <div class="editor-box">
             <div class="editor-label">INPUT: MS-SQL SCRIPT</div>
             <textarea id="inputSql" spellcheck="false" placeholder="Paste script here...">
-CREATE TABLE [dbo].[SalesSmartProductInventory](
-    [Id] [bigint] IDENTITY(1,1) NOT NULL,
-    [ProductCode] [nvarchar](50) NULL,
-    [Quantity] [int] NOT NULL,
-    [UpdateDate] [datetime] NULL
-) ON [PRIMARY]
-GO
-CONSTRAINT [PK_Sales] PRIMARY KEY CLUSTERED 
-(
-	[Id] ASC
-) WITH (PAD_INDEX = OFF) ON [PRIMARY]
-GO
-ALTER TABLE [dbo].[SalesSmartProductInventory] ADD DEFAULT ((0)) FOR [IsActive]
-GO</textarea>
+CREATE TABLE [dbo].[Users](
+    [Id] [int] IDENTITY(1,1) NOT NULL,
+    [Username] [varchar](50) NOT NULL,
+    [DisplayName] [nvarchar](100) NULL,
+    [IsActive] [bit] DEFAULT 1
+)</textarea>
         </div>
         <div class="editor-box">
             <div class="editor-label">OUTPUT: C# CLASS <button class="btn-copy" onclick="copyToClipboard()">Copy</button></div>
@@ -189,17 +181,38 @@ GO</textarea>
     </div>
 
     <script>
+        // --- 1. LOCAL STORAGE & THEME LOGIC ---
+        
+        // Chạy ngay khi load trang để áp dụng theme đã lưu
+        (function initTheme() {
+            const savedTheme = localStorage.getItem('theme');
+            if (savedTheme === 'light') {
+                document.documentElement.setAttribute('data-theme', 'light');
+            }
+        })();
+
         function toggleTheme() {
             const html = document.documentElement;
-            html.setAttribute('data-theme', html.getAttribute('data-theme') === 'light' ? '' : 'light');
+            const currentTheme = html.getAttribute('data-theme');
+            const newTheme = currentTheme === 'light' ? '' : 'light'; // Toggle: '' là dark, 'light' là light
+
+            // Apply theme
+            html.setAttribute('data-theme', newTheme);
+            
+            // Save to LocalStorage
+            localStorage.setItem('theme', newTheme);
         }
 
+        // --- 2. HELPER FUNCTIONS ---
         function toPascalCase(str) {
             return str.replace(/(\w)(\w*)/g, (g0,g1,g2) => g1.toUpperCase() + g2.toLowerCase()).replace(/_/g, '');
         }
 
+        // --- 3. CORE LOGIC ---
         function generateClass() {
             const sql = document.getElementById('inputSql').value;
+            // Get Settings
+            const useIdentity = document.getElementById('chkIdentity').checked;
             const useAnnotations = document.getElementById('chkAnnotations').checked;
             const useComments = document.getElementById('chkComments').checked;
             const usePascal = document.getElementById('chkPascal').checked;
@@ -207,13 +220,13 @@ GO</textarea>
             const includeConstructor = document.getElementById('chkConstructor').checked;
             const encapsulation = document.querySelector('input[name="encapsulation"]:checked').value;
 
-            // 1. Tự động lấy tên bảng
+            // Detect Table Name
             let tableName = "MyClass";
             const tableNameMatch = sql.match(/CREATE\s+TABLE\s+(?:\[\w+\]\.)?\[?(\w+)\]?/i);
             if (tableNameMatch && tableNameMatch[1]) tableName = tableNameMatch[1];
             if (usePascal) tableName = toPascalCase(tableName);
 
-            // 2. Định nghĩa danh sách Valid SQL Types để lọc rác (Quan trọng để fix bug Constraint)
+            // Valid SQL Types (Strict Mode)
             const validSqlTypes = [
                 'bigint', 'int', 'smallint', 'tinyint', 'bit',
                 'decimal', 'numeric', 'money', 'smallmoney',
@@ -227,8 +240,8 @@ GO</textarea>
             const lines = sql.split('\n');
             let members = "";
             let hasAnnotations = false;
+            let hasSchemaAnnotations = false;
 
-            // Các từ khóa bắt đầu dòng cần loại bỏ ngay lập tức
             const ignoredStartKeywords = [
                 "USE", "GO", "SET", "IF", "DROP", "ALTER", "INSERT", "UPDATE", "DELETE", 
                 "EXEC", "PRINT", "CONSTRAINT", "PRIMARY", "FOREIGN", "REFERENCES", 
@@ -239,16 +252,10 @@ GO</textarea>
                 line = line.trim();
                 const upperLine = line.toUpperCase();
 
-                // Bỏ qua dòng comment hoặc rỗng
                 if (!line || line.startsWith("--") || line.startsWith("/*") || line.startsWith("*")) return;
-
-                // Bỏ qua các lệnh hệ thống hoặc Constraint definition
                 if (ignoredStartKeywords.some(key => upperLine.startsWith(key))) return;
-                
-                // Bỏ qua dòng CREATE TABLE chính nó
                 if (upperLine.startsWith("CREATE TABLE")) return;
 
-                // Regex: [Name] [Type](Length)
                 const colMatch = line.match(/(?:\[?([\w@]+)\]?)\s+\[?(\w+)\]?(?:\(([^)]+)\))?/);
 
                 if (colMatch) {
@@ -256,14 +263,8 @@ GO</textarea>
                     const sqlType = colMatch[2].toLowerCase();
                     const sqlLength = colMatch[3];
 
-                    // --- [FIX BUG] Strict Type Checking ---
-                    // Nếu "Kiểu dữ liệu" regex bắt được không nằm trong list validSqlTypes
-                    // (ví dụ nó bắt được chữ ASC, DESC, ON, PRIMARY...) -> Bỏ qua dòng này.
-                    if (!validSqlTypes.includes(sqlType)) {
-                        return;
-                    }
+                    if (!validSqlTypes.includes(sqlType)) return;
 
-                    // Mapping Data Type
                     let csharpType = "string";
                     let isValueType = false;
 
@@ -282,21 +283,26 @@ GO</textarea>
                         default: csharpType = 'string';
                     }
 
-                    // Nullable Logic
+                    let isIdentity = upperLine.includes("IDENTITY");
                     let isNullable = !upperLine.includes("NOT NULL");
-                    let typeStr = csharpType;
                     
+                    let typeStr = csharpType;
                     if (useNullable && isNullable) {
-                        if (isValueType || csharpType === 'string') { // .NET 6+ string?
-                             if(csharpType !== 'byte[]') typeStr += "?";
-                        }
+                        if (isValueType || (csharpType === 'string' && csharpType !== 'byte[]')) typeStr += "?";
                     }
 
-                    // Generate Code
+                    // --- GENERATE MEMBER ---
                     let colName = usePascal ? toPascalCase(originalName) : originalName;
 
                     if (useComments) {
-                        members += `    // Cột: ${originalName} (${sqlType}${sqlLength ? '('+sqlLength+')' : ''} ${isNullable ? 'NULL' : 'NOT NULL'})\n`;
+                        let commentText = `    // Cột: ${originalName} (${sqlType}${sqlLength ? '('+sqlLength+')' : ''} ${isNullable ? 'NULL' : 'NOT NULL'})`;
+                        if (isIdentity) commentText += " - Tự tăng";
+                        members += commentText + "\n";
+                    }
+
+                    if (useIdentity && isIdentity) {
+                        members += `    [DatabaseGenerated(DatabaseGeneratedOption.Identity)]\n`;
+                        hasSchemaAnnotations = true;
                     }
 
                     if (useAnnotations && csharpType === 'string' && sqlLength && sqlLength.toUpperCase() !== 'MAX') {
@@ -319,7 +325,10 @@ GO</textarea>
             });
 
             let output = "";
-            if (hasAnnotations) output += "using System.ComponentModel.DataAnnotations;\n\n";
+            if (hasAnnotations) output += "using System.ComponentModel.DataAnnotations;\n";
+            if (hasSchemaAnnotations) output += "using System.ComponentModel.DataAnnotations.Schema;\n";
+            if (hasAnnotations || hasSchemaAnnotations) output += "\n";
+
             output += `public class ${tableName}\n{\n`;
             if (includeConstructor) output += `    public ${tableName}()\n    {\n    }\n\n`;
             output += members;
